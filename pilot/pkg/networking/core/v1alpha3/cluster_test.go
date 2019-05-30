@@ -54,6 +54,19 @@ var (
 	}
 )
 
+func newTestEnvironment(serviceDiscovery model.ServiceDiscovery, mesh meshconfig.MeshConfig, configStore model.IstioConfigStore) *model.Environment {
+	env := &model.Environment{
+		ServiceDiscovery: serviceDiscovery,
+		IstioConfigStore: configStore,
+		Mesh:             &mesh,
+	}
+
+	env.PushContext = model.NewPushContext()
+	_ = env.PushContext.InitContext(env)
+
+	return env
+}
+
 func TestHTTPCircuitBreakerThresholds(t *testing.T) {
 	g := NewGomegaWithT(t)
 
@@ -232,7 +245,8 @@ func buildTestClustersWithProxyMetadata(serviceHostname string, serviceResolutio
 	serviceDiscovery.GetProxyServiceInstancesReturns(instances, nil)
 	serviceDiscovery.InstancesByPortReturns(instances, nil)
 
-	env := newTestEnvironment(serviceDiscovery, mesh)
+	configStore := &fakes.IstioConfigStore{}
+	env := newTestEnvironment(serviceDiscovery, mesh, configStore)
 	env.PushContext.SetDestinationRules([]model.Config{
 		{ConfigMeta: model.ConfigMeta{
 			Type:    model.DestinationRule.Type,
@@ -336,21 +350,6 @@ func TestBuildGatewayClustersWithRingHashLbDefaultMinRingSize(t *testing.T) {
 	g.Expect(cluster.GetRingHashLbConfig().GetMinimumRingSize().GetValue()).To(Equal(uint64(1024)))
 	g.Expect(cluster.Name).To(Equal("outbound|8080||*.example.org"))
 	g.Expect(cluster.ConnectTimeout).To(Equal(time.Duration(10000000001)))
-}
-
-func newTestEnvironment(serviceDiscovery model.ServiceDiscovery, mesh meshconfig.MeshConfig) *model.Environment {
-	configStore := &fakes.IstioConfigStore{}
-
-	env := &model.Environment{
-		ServiceDiscovery: serviceDiscovery,
-		IstioConfigStore: configStore,
-		Mesh:             &mesh,
-	}
-
-	env.PushContext = model.NewPushContext()
-	_ = env.PushContext.InitContext(env)
-
-	return env
 }
 
 func TestBuildSidecarClustersWithIstioMutualAndSNI(t *testing.T) {
@@ -819,7 +818,8 @@ func TestBuildLocalityLbEndpoints(t *testing.T) {
 	serviceDiscovery.ServicesReturns([]*model.Service{service}, nil)
 	serviceDiscovery.InstancesByPortReturns(instances, nil)
 
-	env := newTestEnvironment(serviceDiscovery, testMesh)
+	configStore := &fakes.IstioConfigStore{}
+	env := newTestEnvironment(serviceDiscovery, testMesh, configStore)
 
 	localityLbEndpoints := buildLocalityLbEndpoints(env, model.GetNetworkView(nil), service, 8080, nil)
 	g.Expect(len(localityLbEndpoints)).To(Equal(2))

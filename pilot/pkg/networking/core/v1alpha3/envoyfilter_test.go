@@ -16,12 +16,17 @@ package v1alpha3
 
 import (
 	"net"
+	"reflect"
 	"testing"
 
+	xdsapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	"github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	"github.com/gogo/protobuf/types"
 
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/networking/core/v1alpha3/fakes"
 	"istio.io/istio/pilot/pkg/networking/plugin"
 )
 
@@ -36,6 +41,78 @@ func TestBuildListenerFromEnvoyConfig(t *testing.T) {
 	}
 	if listener.Address.GetAddress() == nil {
 		t.Errorf("listener address is nil")
+	}
+}
+
+func TestInsertUserListeners(t *testing.T) {
+	listenerConfig := `{"address": { "pipe": { "path": "some-path" } }, "filter_chains": [{"filters": [{"name": "envoy.ratelimit"}]}]}`
+	envoyFilterConfigStore := &fakes.IstioConfigStore{
+		EnvoyFilterStub: func(workloadLabels model.LabelsCollection) *model.Config {
+			return &model.Config{
+				ConfigMeta: model.ConfigMeta{
+					Name:      "test-envoyfilter",
+					Namespace: "not-default",
+				},
+				Spec: &networking.EnvoyFilter{
+					Listeners: []*networking.EnvoyFilter_Listener{
+						{
+							Patches: []*networking.EnvoyFilter_Patch{
+								{
+									Operator: networking.EnvoyFilter_Patch_ADD,
+									Value: &types.Value{
+										Kind: &types.Value_StringValue{StringValue: listenerConfig},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+		},
+	}
+	serviceDiscovery := &fakes.ServiceDiscovery{}
+	envoyFilterEnv := newTestEnvironment(serviceDiscovery, testMesh, envoyFilterConfigStore)
+
+	testCases := []struct {
+		name      string
+		listeners []*xdsapi.Listener
+		env       *model.Environment
+		labels    model.LabelsCollection
+		result    []*xdsapi.Listener
+	}{
+		{
+			name:      "happy path",
+			listeners: make([]*xdsapi.Listener, 0),
+			env:       envoyFilterEnv,
+			labels:    model.LabelsCollection{},
+			result: []*xdsapi.Listener{
+				{
+					Address: core.Address{
+						Address: &core.Address_Pipe{
+							Pipe: &core.Pipe{
+								Path: "some-path",
+							},
+						},
+					},
+					FilterChains: []listener.FilterChain{
+						{
+							Filters: []listener.Filter{
+								{
+									Name: "envoy.ratelimit",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		ret := insertUserListeners(tc.listeners, tc.env, tc.labels)
+		if !reflect.DeepEqual(tc.result, ret) {
+			t.Errorf("test case %s: expecting %v but got %v", tc.name, tc.result, ret)
+		}
 	}
 }
 

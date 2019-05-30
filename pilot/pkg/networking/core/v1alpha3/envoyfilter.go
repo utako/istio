@@ -40,6 +40,7 @@ func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, l
 	}
 
 	// for each EnvoyFilter.Listener, if Patch is provided and Path is not, add the listener
+	// if the config is invalid, the error is logged and no new listeners are added
 	for _, l := range filterCRD.Listeners {
 		if len(l.Patches) == 0 {
 			continue
