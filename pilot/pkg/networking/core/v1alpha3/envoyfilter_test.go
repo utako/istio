@@ -18,10 +18,25 @@ import (
 	"net"
 	"testing"
 
+	"github.com/gogo/protobuf/types"
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/pilot/pkg/networking/plugin"
 )
+
+func TestBuildListenerFromEnvoyConfig(t *testing.T) {
+	jsonValue := `{"address": { "pipe": { "path": "some-address" } }, "filter_chains": [{"filters": [{"name": "envoy.ratelimit"}]}]}`
+	val := &types.Value{
+		Kind: &types.Value_StringValue{StringValue: jsonValue},
+	}
+	listener, err := buildListenerFromEnvoyConfig(val)
+	if err != nil {
+		t.Errorf("failed to build listener")
+	}
+	if listener.Address.GetAddress() == nil {
+		t.Errorf("listener address is nil")
+	}
+}
 
 func TestListenerMatch(t *testing.T) {
 	inputParams := &plugin.InputParams{

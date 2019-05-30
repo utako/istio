@@ -990,7 +990,11 @@ func TestIstioConfigStore_Gateway(t *testing.T) {
 
 func TestIstioConfigStore_EnvoyFilter(t *testing.T) {
 	ns := "ns1"
-	workloadLabels := model.LabelsCollection{}
+	workloadLabels := model.LabelsCollection{
+		model.Labels{
+			"foo": "bar",
+		},
+	}
 
 	l := &fakeStore{
 		cfg: map[string][]model.Config{
@@ -1001,6 +1005,9 @@ func TestIstioConfigStore_EnvoyFilter(t *testing.T) {
 						Namespace: ns,
 					},
 					Spec: &networking.EnvoyFilter{
+						WorkloadLabels: map[string]string{
+							"foo": "bar",
+						},
 						Filters: []*networking.EnvoyFilter_Filter{
 							{
 								InsertPosition: &networking.EnvoyFilter_InsertPosition{
@@ -1035,6 +1042,64 @@ func TestIstioConfigStore_EnvoyFilter(t *testing.T) {
 
 	if !reflect.DeepEqual(*expectedConfig, *cfgs) {
 		t.Errorf("Got different Config, Excepted:\n%v\n, Got: \n%v\n", expectedConfig, cfgs)
+	}
+}
+
+func TestIstioConfigStore_EnvoyFilter_Listeners(t *testing.T) {
+	ns := "ns1"
+	workloadLabels := model.LabelsCollection{}
+
+	l := &fakeStore{
+		cfg: map[string][]model.Config{
+			model.EnvoyFilter.Type: {
+				{
+					ConfigMeta: model.ConfigMeta{
+						Name:      "request-count",
+						Namespace: ns,
+					},
+					Spec: &networking.EnvoyFilter{
+						Listeners: []*networking.EnvoyFilter_Listener{
+							{
+								Patches: []*networking.EnvoyFilter_Patch{
+									{
+										Value: &types.Value{
+											Kind: &types.Value_StringValue{
+												StringValue: "string",
+											},
+										},
+									},
+								},
+							},
+						},
+						Clusters: []*networking.EnvoyFilter_Cluster{},
+						Routes:   []*networking.EnvoyFilter_Route{},
+					},
+				},
+			},
+		},
+	}
+	ii := model.MakeIstioStore(l)
+	mergedFilterConfig := &networking.EnvoyFilter{
+		WorkloadLabels: map[string]string{},
+		Listeners: []*networking.EnvoyFilter_Listener{
+			{
+				Patches: []*networking.EnvoyFilter_Patch{
+					{
+						Value: &types.Value{
+							Kind: &types.Value_StringValue{
+								StringValue: "string",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	expectedConfig := &model.Config{Spec: mergedFilterConfig}
+	cfgs := ii.EnvoyFilter(workloadLabels)
+
+	if !reflect.DeepEqual(*expectedConfig, *cfgs) {
+		t.Errorf("Got different Config, Expected:\n%v\n, Got: \n%v\n", expectedConfig, cfgs)
 	}
 }
 

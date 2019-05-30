@@ -23,6 +23,8 @@ import (
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	http_conn "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
 	xdsutil "github.com/envoyproxy/go-control-plane/pkg/util"
+	"github.com/gogo/protobuf/jsonpb"
+	"github.com/gogo/protobuf/types"
 
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
@@ -30,6 +32,48 @@ import (
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/pkg/log"
 )
+
+func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, labels model.LabelsCollection) []*xdsapi.Listener {
+	filterCRD := getUserFiltersForWorkload(env, labels)
+	if filterCRD == nil {
+		return listeners
+	}
+
+	// for each EnvoyFilter.Listener, if Patch is provided and Path is not, add the listener
+	for _, l := range filterCRD.Listeners {
+		if len(l.Patches) == 0 {
+			continue
+		}
+
+		for _, p := range l.Patches {
+			if p.Path == "" && p.Operator == networking.EnvoyFilter_Patch_ADD {
+				newListener, err := buildListenerFromEnvoyConfig(p.Value)
+				if err != nil {
+					log.Warnf("Failed to unmarshal provided value into listener")
+					return listeners
+				}
+				listeners = append(listeners, newListener)
+			}
+		}
+	}
+
+	return listeners
+}
+
+func buildListenerFromEnvoyConfig(value *types.Value) (*xdsapi.Listener, error) {
+	listener := xdsapi.Listener{}
+	val := value.GetStringValue()
+	if val != "" {
+		jsonum := &jsonpb.Unmarshaler{}
+		r := strings.NewReader(val)
+		err := jsonum.Unmarshal(r, &listener)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &listener, nil
+}
 
 // We process EnvoyFilter CRDs after calling all plugins and building the listener with the required filter chains
 // Having the entire filter chain is essential because users can specify one or more filters to be inserted
@@ -40,7 +84,7 @@ import (
 // filter chain (which is the http connection manager) with the updated object.
 func insertUserFilters(in *plugin.InputParams, listener *xdsapi.Listener,
 	httpConnectionManagers []*http_conn.HttpConnectionManager) error { //nolint: unparam
-	filterCRD := getUserFiltersForWorkload(in)
+	filterCRD := getUserFiltersForWorkload(in.Env, in.Node.WorkloadLabels)
 	if filterCRD == nil {
 		return nil
 	}
@@ -113,10 +157,8 @@ func insertUserFilters(in *plugin.InputParams, listener *xdsapi.Listener,
 
 // NOTE: There can be only one filter for a workload. If multiple filters are defined, the behavior
 // is undefined.
-func getUserFiltersForWorkload(in *plugin.InputParams) *networking.EnvoyFilter {
-	env := in.Env
-
-	f := env.EnvoyFilter(in.Node.WorkloadLabels)
+func getUserFiltersForWorkload(env *model.Environment, labels model.LabelsCollection) *networking.EnvoyFilter {
+	f := env.EnvoyFilter(labels)
 	if f != nil {
 		return f.Spec.(*networking.EnvoyFilter)
 	}

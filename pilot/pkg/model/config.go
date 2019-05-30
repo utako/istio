@@ -723,13 +723,14 @@ func (store *istioConfigStore) EnvoyFilter(workloadLabels LabelsCollection) *Con
 		// if there is no workload selector, the filter applies to all workloads
 		// if there is a workload selector, check for matching workload labels
 		if filter.GetWorkloadLabels() != nil {
-			workloadSelector := Labels(filter.GetWorkloadLabels())
-			if !workloadLabels.IsSupersetOf(workloadSelector) {
+			workloadLabelsInConfigStore := Labels(filter.GetWorkloadLabels())
+			if !workloadLabels.IsSupersetOf(workloadLabelsInConfigStore) {
 				continue
 			}
 		}
 		mergedFilterConfig.WorkloadLabels = make(map[string]string)
 		mergedFilterConfig.Filters = append(mergedFilterConfig.Filters, filter.Filters...)
+		mergedFilterConfig.Listeners = append(mergedFilterConfig.Listeners, filter.Listeners...)
 	}
 
 	return &Config{Spec: mergedFilterConfig}
