@@ -350,3 +350,46 @@ func insertNetworkFilter(listenerName string, filterChain *listener.FilterChain,
 	log.Infof("EnvoyFilters: Rebuilt network filter stack for listener %s (from %d filters to %d filters)",
 		listenerName, oldLen, len(filterChain.Filters))
 }
+
+func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, labels model.LabelsCollection) []*xdsapi.Listener {
+	filterCRD := getUserFiltersForWorkload(env, labels)
+	if filterCRD == nil {
+		return listeners
+	}
+
+	// for each EnvoyFilter.Listener, if Patch is provided and Path is not, add the listener
+	// if the config is invalid, the error is logged and no new listeners are added
+	for _, l := range filterCRD.Listeners {
+		if len(l.Patches) == 0 {
+			continue
+		}
+
+		for _, p := range l.Patches {
+			if p.Path == "" && p.Operator == networking.EnvoyFilter_Patch_ADD {
+				newListener, err := buildListenerFromEnvoyConfig(p.Value)
+				if err != nil {
+					log.Warnf("Failed to unmarshal provided value into listener")
+					return listeners
+				}
+				listeners = append(listeners, newListener)
+			}
+		}
+	}
+
+	return listeners
+}
+
+func buildListenerFromEnvoyConfig(value *types.Value) (*xdsapi.Listener, error) {
+	listener := xdsapi.Listener{}
+	val := value.GetStringValue()
+	if val != "" {
+		jsonum := &jsonpb.Unmarshaler{}
+		r := strings.NewReader(val)
+		err := jsonum.Unmarshal(r, &listener)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &listener, nil
+}
