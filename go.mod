@@ -159,6 +159,7 @@ require (
 	github.com/tinylib/msgp v1.0.2 // indirect
 	github.com/uber/jaeger-client-go v0.0.0-20190228190846-ecf2d03a9e80
 	github.com/uber/jaeger-lib v2.0.0+incompatible // indirect
+	github.com/utako/json-patch
 	github.com/yashtewari/glob-intersection v0.0.0-20180206001645-7af743e8ec84 // indirect
 	github.com/yl2chen/cidranger v0.0.0-20180214081945-928b519e5268
 	github.com/yuin/gopher-lua v0.0.0-20180316054350-84ea3a3c79b3 // indirect

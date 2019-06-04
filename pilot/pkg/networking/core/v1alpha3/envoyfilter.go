@@ -15,6 +15,7 @@
 package v1alpha3
 
 import (
+	"encoding/json"
 	"net"
 	"strings"
 
@@ -28,53 +29,11 @@ import (
 
 	networking "istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pilot/pkg/model"
+	"istio.io/istio/pilot/pkg/networking/core/v1alpha3/patch"
 	"istio.io/istio/pilot/pkg/networking/plugin"
 	"istio.io/istio/pilot/pkg/networking/util"
 	"istio.io/pkg/log"
 )
-
-func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, labels model.LabelsCollection) []*xdsapi.Listener {
-	filterCRD := getUserFiltersForWorkload(env, labels)
-	if filterCRD == nil {
-		return listeners
-	}
-
-	// for each EnvoyFilter.Listener, if Patch is provided and Path is not, add the listener
-	// if the config is invalid, the error is logged and no new listeners are added
-	for _, l := range filterCRD.Listeners {
-		if len(l.Patches) == 0 {
-			continue
-		}
-
-		for _, p := range l.Patches {
-			if p.Path == "" && p.Operator == networking.EnvoyFilter_Patch_ADD {
-				newListener, err := buildListenerFromEnvoyConfig(p.Value)
-				if err != nil {
-					log.Warnf("Failed to unmarshal provided value into listener")
-					return listeners
-				}
-				listeners = append(listeners, newListener)
-			}
-		}
-	}
-
-	return listeners
-}
-
-func buildListenerFromEnvoyConfig(value *types.Value) (*xdsapi.Listener, error) {
-	listener := xdsapi.Listener{}
-	val := value.GetStringValue()
-	if val != "" {
-		jsonum := &jsonpb.Unmarshaler{}
-		r := strings.NewReader(val)
-		err := jsonum.Unmarshal(r, &listener)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &listener, nil
-}
 
 // We process EnvoyFilter CRDs after calling all plugins and building the listener with the required filter chains
 // Having the entire filter chain is essential because users can specify one or more filters to be inserted
@@ -351,7 +310,7 @@ func insertNetworkFilter(listenerName string, filterChain *listener.FilterChain,
 		listenerName, oldLen, len(filterChain.Filters))
 }
 
-func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, labels model.LabelsCollection) []*xdsapi.Listener {
+func applyUserListenerConfig(listeners []*xdsapi.Listener, env *model.Environment, labels model.LabelsCollection) []*xdsapi.Listener {
 	filterCRD := getUserFiltersForWorkload(env, labels)
 	if filterCRD == nil {
 		return listeners
@@ -359,6 +318,7 @@ func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, l
 
 	// for each EnvoyFilter.Listener, if Patch is provided and Path is not, add the listener
 	// if the config is invalid, the error is logged and no new listeners are added
+	modifiedListeners := []*xdsapi.Listener{}
 	for _, l := range filterCRD.Listeners {
 		if len(l.Patches) == 0 {
 			continue
@@ -374,9 +334,61 @@ func insertUserListeners(listeners []*xdsapi.Listener, env *model.Environment, l
 				listeners = append(listeners, newListener)
 			}
 		}
+
+		for _, p := range l.Patches {
+			for _, existingListener := range listeners {
+				if p.Path != "" && p.Operator == networking.EnvoyFilter_Patch_MERGE {
+					patchDoc := []Document{
+						{
+							Op:    "replace",
+							Path:  p.Path,
+							Value: p.Value.GetStringValue(),
+						},
+					}
+					d, err := json.Marshal(patchDoc)
+					if err != nil {
+						panic(err)
+					}
+
+					patch, err := jsonpatch.DecodePatch(d)
+					if err != nil {
+						panic(err)
+					}
+
+					jsonm := &jsonpb.Marshaler{}
+					data, err := jsonm.MarshalToString(existingListener)
+					if err != nil {
+						panic(err)
+					}
+
+					someBytes, err := patch.Apply([]byte(data))
+					if err != nil {
+						panic(err)
+					}
+
+					modifiedListener := xdsapi.Listener{}
+					jsonum := &jsonpb.Unmarshaler{}
+					r := strings.NewReader(string(someBytes))
+					err = jsonum.Unmarshal(r, &modifiedListener)
+					if err != nil {
+						panic(err)
+					}
+
+					modifiedListeners = append(modifiedListeners, &modifiedListener)
+				} else {
+					modifiedListeners = append(modifiedListeners, existingListener)
+				}
+			}
+		}
 	}
 
-	return listeners
+	return modifiedListeners
+}
+
+type Document struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value string `json:"value"`
 }
 
 func buildListenerFromEnvoyConfig(value *types.Value) (*xdsapi.Listener, error) {
